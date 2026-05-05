@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\\.[0-9]+\\.[0-9]+([-.][A-Za-z0-9._-]+)?$'; then
+            echo "Version must look like v0.1.0 or v0.1.0-beta.1" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate skill
+        run: node scripts/validate-skill.mjs
+
+      - name: Build Claude skill ZIP
+        run: node scripts/package-claude-skill.mjs
+
+      - name: Smoke test packaged skill
+        run: |
+          rm -rf /tmp/tritype-comparison-release-test
+          mkdir -p /tmp/tritype-comparison-release-test
+          unzip -q dist/tritype-comparison.zip -d /tmp/tritype-comparison-release-test
+          cd /tmp/tritype-comparison-release-test/tritype-comparison
+          node scripts/lookup-pair.mjs 378 935 --format json > /tmp/tritype-result.json
+          node -e "const r = require('/tmp/tritype-result.json'); if (r.key !== '378-935' || r.analysis.sections.length !== 5) process.exit(1);"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/tritype-comparison.zip --clobber
+          else
+            gh release create "$VERSION" dist/tritype-comparison.zip \
+              --title "$VERSION" \
+              --notes "Claude.ai upload package: tritype-comparison.zip"
+          fi

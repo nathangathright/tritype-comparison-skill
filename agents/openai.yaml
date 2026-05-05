@@ -1,0 +1,3 @@
+display_name: Tritype Comparison
+short_description: Retrieve lead-specific Enneagram tritype pair comparisons.
+default_prompt: Compare 378 and 935 using the tritype comparison corpus.
